@@ -14,8 +14,7 @@ API_ID = 31418719                     # Apna API_ID daalo
 API_HASH = "e044c2413a57ac076ae12ce800269cec"    # Apna API_HASH daalo
 BOT_TOKEN = "8758350040:AAHbM8F2P8VG2juGvX4wg0YtsqFW_Hj5-PU"  # Apna BOT_TOKEN daalo
 OWNER = 5311223486                  # Apna Telegram user ID (integer)
-DB_PATH = "banall.db"              # SQLite database file              # SQLite database file
-
+DB_PATH = "banall.db"              # SQLite database file
 # -------------------- Logging --------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -490,10 +489,15 @@ async def register_self():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
-    loop.run_until_complete(app.start())        # Start the client
-    loop.run_until_complete(register_self())    # Register after start
+    
+    # Start client (synchronous in older Pyrogram)
+    app.start()
+    
+    # Register bot (async) – use run_until_complete
+    loop.run_until_complete(register_self())
+    
     print("🚀 Banall Bot Booted Successfully (SQLite)")
     try:
-        loop.run_forever()                      # Keep the bot running
+        loop.run_forever()  # Keep the bot running
     except KeyboardInterrupt:
         print("Bot stopped.")
