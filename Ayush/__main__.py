@@ -2,12 +2,19 @@ import os
 import sys
 import logging
 import asyncio
+import sqlite3
 from datetime import datetime
-from motor.motor_asyncio import AsyncIOMotorClient
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import ChatAdminRequired, PeerIdInvalid
 from pyrogram.enums import ChatMembersFilter
+
+# -------------------- CONFIG (MANUAL) --------------------
+API_ID = 31418719                     # Apna API_ID daalo
+API_HASH = "e044c2413a57ac076ae12ce800269cec"    # Apna API_HASH daalo
+BOT_TOKEN = "8758350040:AAHKKe3kiWP182qu9l-Y5ejKAGCpp-NwNmY"  # Apna BOT_TOKEN daalo
+OWNER = 5311223486                  # Apna Telegram user ID (integer)
+DB_PATH = "banall.db"              # SQLite database file
 
 # -------------------- Logging --------------------
 logging.basicConfig(
@@ -17,81 +24,121 @@ logging.basicConfig(
 logging.getLogger("pyrogram").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# -------------------- Config --------------------
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-OWNER = int(os.getenv("OWNER", 0))
-MONGO_URI = os.getenv("MONGO_URI", "")
-MONGO_DB = os.getenv("MONGO_DB", "banall")
-
-if not all([API_ID, API_HASH, BOT_TOKEN, OWNER, MONGO_URI]):
-    logger.error("Missing required environment variables.")
-    sys.exit(1)
-
-# -------------------- MongoDB --------------------
-mongo_client = AsyncIOMotorClient(MONGO_URI)
-db = mongo_client[MONGO_DB]
-bots_collection = db["bots"]
-main_collection = db["main"]  # store main bot info
+# -------------------- SQLite Helpers (async) --------------------
+def run_query(query, params=(), fetchone=False, fetchall=False, commit=False):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(query, params)
+    if commit:
+        conn.commit()
+        result = None
+    elif fetchone:
+        result = cur.fetchone()
+    elif fetchall:
+        result = cur.fetchall()
+    else:
+        result = None
+    conn.close()
+    return result
 
 async def init_db():
-    await bots_collection.create_index("bot_id", unique=True)
-    await bots_collection.create_index("bot_token", unique=True)
-    # Ensure main document exists
-    main = await main_collection.find_one({"_id": "main"})
-    if not main:
-        # will be set on startup
-        pass
+    await asyncio.to_thread(
+        run_query,
+        """CREATE TABLE IF NOT EXISTS bots (
+            bot_id TEXT PRIMARY KEY,
+            owner_id INTEGER NOT NULL,
+            bot_token TEXT UNIQUE NOT NULL,
+            bot_username TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        commit=True
+    )
+    await asyncio.to_thread(
+        run_query,
+        """CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot_id TEXT NOT NULL,
+            chat_id INTEGER NOT NULL,
+            chat_title TEXT,
+            chat_link TEXT,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (bot_id) REFERENCES bots (bot_id) ON DELETE CASCADE,
+            UNIQUE(bot_id, chat_id)
+        )""",
+        commit=True
+    )
 
-# -------------------- Database Helpers --------------------
 async def get_bot_by_id(bot_id: str):
-    return await bots_collection.find_one({"bot_id": bot_id})
+    row = await asyncio.to_thread(
+        run_query,
+        "SELECT * FROM bots WHERE bot_id = ?",
+        (bot_id,),
+        fetchone=True
+    )
+    return row
 
 async def get_bot_by_token(token: str):
-    return await bots_collection.find_one({"bot_token": token})
+    row = await asyncio.to_thread(
+        run_query,
+        "SELECT * FROM bots WHERE bot_token = ?",
+        (token,),
+        fetchone=True
+    )
+    return row
 
 async def add_bot(bot_id: str, owner_id: int, bot_token: str, bot_username: str = None):
-    doc = {
-        "bot_id": bot_id,
-        "owner_id": owner_id,
-        "bot_token": bot_token,
-        "bot_username": bot_username,
-        "created_at": datetime.utcnow(),
-        "groups": []
-    }
-    await bots_collection.update_one(
-        {"bot_id": bot_id},
-        {"$setOnInsert": doc},
-        upsert=True
+    await asyncio.to_thread(
+        run_query,
+        """INSERT OR REPLACE INTO bots (bot_id, owner_id, bot_token, bot_username)
+           VALUES (?, ?, ?, ?)""",
+        (bot_id, owner_id, bot_token, bot_username),
+        commit=True
     )
 
 async def add_group(bot_id: str, chat_id: int, chat_title: str = None, chat_link: str = None):
-    await bots_collection.update_one(
-        {"bot_id": bot_id, "groups.chat_id": {"$ne": chat_id}},
-        {"$push": {"groups": {"chat_id": chat_id, "chat_title": chat_title, "chat_link": chat_link}}}
+    await asyncio.to_thread(
+        run_query,
+        """INSERT OR IGNORE INTO groups (bot_id, chat_id, chat_title, chat_link)
+           VALUES (?, ?, ?, ?)""",
+        (bot_id, chat_id, chat_title, chat_link),
+        commit=True
     )
 
 async def get_groups(bot_id: str):
-    doc = await bots_collection.find_one({"bot_id": bot_id}, {"groups": 1})
-    return doc.get("groups", []) if doc else []
+    rows = await asyncio.to_thread(
+        run_query,
+        "SELECT chat_id, chat_link FROM groups WHERE bot_id = ?",
+        (bot_id,),
+        fetchall=True
+    )
+    return rows or []
 
 async def get_all_bots():
-    cursor = bots_collection.find({})
-    return await cursor.to_list(length=None)
+    rows = await asyncio.to_thread(
+        run_query,
+        "SELECT bot_id, bot_token, owner_id FROM bots",
+        fetchall=True
+    )
+    return rows or []
 
 async def get_total_clones():
-    return await bots_collection.count_documents({"owner_id": {"$ne": OWNER}})
-
-async def get_main_bot_info():
-    return await main_collection.find_one({"_id": "main"})
-
-async def set_main_bot_username(username: str):
-    await main_collection.update_one(
-        {"_id": "main"},
-        {"$set": {"bot_username": username}},
-        upsert=True
+    row = await asyncio.to_thread(
+        run_query,
+        "SELECT COUNT(*) FROM bots WHERE owner_id != ?",
+        (OWNER,),
+        fetchone=True
     )
+    return row[0] if row else 0
+
+async def get_main_bot():
+    row = await asyncio.to_thread(
+        run_query,
+        "SELECT * FROM bots WHERE owner_id = ?",
+        (OWNER,),
+        fetchone=True
+    )
+    return row
 
 # -------------------- Pyrogram Client --------------------
 app = Client(
@@ -160,16 +207,17 @@ async def start_command(client, message: Message):
     owner_mention = await get_owner_mention(client, owner_id)
     caption = (
         f"🥀 ʜᴇʟʟᴏ! ɪ ᴀᴍ {me.first_name} 🤖🔥\n\n"
-        f"👑 **Owner:** {owner_mention}\n\n"
         "⚠️ Use commands cautiously!\n"
-        "Admin commands: /banall, /unbanall, /leave, /restart"
+        "Admin commands: /banall, /unbanall, /leave, /restart\n"
+        "Owner commands: /broadcast, /restart\n"
+        "Main bot only: /clone (register new clone)"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Update", url="https://t.me/aayu_bots")],
         [InlineKeyboardButton("👑 Owner", url=f"https://t.me/{owner_mention.replace('@','')}" if owner_mention.startswith('@') else f"tg://user?id={owner_id}")]
     ])
     await message.reply_photo(
-        photo="https://telegra.ph/file/b26847056f19c1b5d7712.jpg",
+        photo="https://i.ibb.co/nqpSvrq5/file-4275.jpg",
         caption=caption,
         reply_markup=kb
     )
@@ -289,7 +337,7 @@ async def abroadcast_command(client, message: Message):
     for bot in all_bots:
         bot_id = bot["bot_id"]
         token = bot["bot_token"]
-        groups = bot.get("groups", [])
+        groups = await get_groups(bot_id)
         total_groups += len(groups)
         try:
             temp_app = Client(
@@ -313,53 +361,55 @@ async def abroadcast_command(client, message: Message):
             logger.error(f"Failed to start temporary client for {bot_id}: {e}")
     await message.reply(f"✅ Abroadcast complete! Sent to {total_sent}/{total_groups} groups across all bots.")
 
-# ---- /clone (clone info) ----
-@app.on_message(filters.command("clone") & filters.private)
-async def clone_info(client, message: Message):
-    main_info = await get_main_bot_info()
-    if not main_info:
-        await message.reply("❌ Main bot not found. Please contact the owner.")
-        return
-    main_username = main_info.get("bot_username", "gc_banall_robot")
-    caption = (
-        "✨ **To create your own bot clone, use the original bot.**\n\n"
-        f"👉 @{main_username}\n"
-        "Simply go there and start cloning !!"
-    )
-    await message.reply_photo(
-        photo="https://telegra.ph/file/b26847056f19c1b5d7712.jpg",
-        caption=caption,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🚀 Go to Main Bot", url=f"https://t.me/{main_username}")]]
-        )
-    )
-
-# ---- /register (main bot only) ----
+# ---- /clone command (main bot = registration, clone bot = info) ----
 pending_registrations = {}
 
-@app.on_message(filters.command("register") & filters.private)
-async def register_start(client, message: Message):
+@app.on_message(filters.command("clone") & filters.private)
+async def clone_command(client, message: Message):
     me = await client.get_me()
     bot_id = me.username
     doc = await get_bot_by_id(bot_id)
-    # Only allow if this bot is the main bot (owner == OWNER)
-    if not doc or doc["owner_id"] != OWNER:
-        await message.reply("❌ This command is only available on the main bot.")
+    if not doc:
+        await message.reply("⚠️ This bot is not registered. Please contact the main bot owner.")
         return
-    user_id = message.from_user.id
-    if user_id in pending_registrations:
-        await message.reply("⏳ You already have a pending registration. Send the token or /cancel to abort.")
-        return
-    pending_registrations[user_id] = {"step": "token"}
-    await message.reply(
-        "📝 **Clone Registration**\n\n"
-        "Please send me the **bot token** of your new bot.\n"
-        "You can get it from @BotFather.\n\n"
-        "Send /cancel to abort."
-    )
 
-@app.on_message(filters.private & ~filters.command(["cancel", "register"]))
-async def register_step(client, message: Message):
+    # Check if this is the main bot
+    if doc["owner_id"] == OWNER:
+        # Main bot: start registration flow
+        user_id = message.from_user.id
+        if user_id in pending_registrations:
+            await message.reply("⏳ You already have a pending registration. Send the token or /cancel to abort.")
+            return
+        pending_registrations[user_id] = {"step": "token"}
+        await message.reply(
+            "📝 **Clone Registration**\n\n"
+            "Please send me the **bot token** of your new bot.\n"
+            "You can get it from @BotFather.\n\n"
+            "Send /cancel to abort."
+        )
+    else:
+        # Clone bot: show cloning info
+        main = await get_main_bot()
+        if not main:
+            await message.reply("❌ Main bot not found in database.")
+            return
+        main_username = main["bot_username"]
+        caption = (
+            "✨ **To create your own bot clone, use the original bot.**\n\n"
+            f"👉 @{main_username}\n"
+            "Simply go there and start cloning !!"
+        )
+        await message.reply_photo(
+            photo="https://i.ibb.co/nqpSvrq5/file-4275.jpg",
+            caption=caption,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🚀 Go to Main Bot", url=f"https://t.me/{main_username}")]]
+            )
+        )
+
+# ---- Handle token input for registration (main bot only) ----
+@app.on_message(filters.private & ~filters.command(["cancel", "clone"]))
+async def registration_step(client, message: Message):
     user_id = message.from_user.id
     if user_id not in pending_registrations:
         return
@@ -384,7 +434,6 @@ async def register_step(client, message: Message):
                 await temp_app.stop()
                 pending_registrations.pop(user_id, None)
                 return
-            # Store bot with this user as owner
             await add_bot(bot_id, user_id, token, bot_username)
             # Notify main owner
             try:
@@ -413,6 +462,7 @@ async def register_step(client, message: Message):
     else:
         pass
 
+# ---- /cancel (to abort registration) ----
 @app.on_message(filters.command("cancel") & filters.private)
 async def cancel_registration(client, message: Message):
     user_id = message.from_user.id
@@ -422,7 +472,7 @@ async def cancel_registration(client, message: Message):
     else:
         await message.reply("ℹ️ No pending registration.")
 
-# ---- Startup: register self and set main info ----
+# ---- Startup: register self ----
 async def register_self():
     me = await app.get_me()
     bot_id = me.username
@@ -430,12 +480,8 @@ async def register_self():
     if not doc:
         # Register as main bot (since this is first run)
         await add_bot(bot_id, OWNER, BOT_TOKEN, me.username)
-        await set_main_bot_username(me.username)
         logger.info(f"Main bot @{bot_id} registered.")
     else:
-        # If already registered, just ensure main info is set if this is the main bot
-        if doc["owner_id"] == OWNER:
-            await set_main_bot_username(me.username)
         logger.info(f"Bot @{bot_id} already registered with owner {doc['owner_id']}")
 
 # -------------------- Run Bot --------------------
@@ -446,5 +492,5 @@ if __name__ == "__main__":
     async def startup(client):
         await register_self()
         logger.info("Bot started and registered.")
-    print("🚀 Banall Bot Booted Successfully (Simplified)")
+    print("🚀 Banall Bot Booted Successfully (SQLite)")
     app.run()
