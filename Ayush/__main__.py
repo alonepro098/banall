@@ -14,7 +14,7 @@ API_ID = 31418719                     # Apna API_ID daalo
 API_HASH = "e044c2413a57ac076ae12ce800269cec"    # Apna API_HASH daalo
 BOT_TOKEN = "8758350040:AAHbM8F2P8VG2juGvX4wg0YtsqFW_Hj5-PU"  # Apna BOT_TOKEN daalo
 OWNER = 5311223486                  # Apna Telegram user ID (integer)
-DB_PATH = "banall.db"              # SQLite database file
+DB_PATH = "banall.db"              # SQLite database file              # SQLite database file
 
 # -------------------- Logging --------------------
 logging.basicConfig(
@@ -207,7 +207,8 @@ async def start_command(client, message: Message):
     owner_mention = await get_owner_mention(client, owner_id)
     caption = (
         f"🥀 ʜᴇʟʟᴏ! ɪ ᴀᴍ {me.first_name} 🤖🔥\n\n"
-        
+        f"👑 **Owner:** {owner_mention}\n"
+        f"📢 **Updates:** [Click Here](https://t.me/aayu_bots)\n\n"
         "⚠️ Use commands cautiously!\n"
         "Admin commands: /banall, /unbanall, /leave, /restart\n"
         "Owner commands: /broadcast, /restart\n"
@@ -218,7 +219,7 @@ async def start_command(client, message: Message):
         [InlineKeyboardButton("👑 Owner", url=f"https://t.me/{owner_mention.replace('@','')}" if owner_mention.startswith('@') else f"tg://user?id={owner_id}")]
     ])
     await message.reply_photo(
-        photo="https://i.ibb.co/nqpSvrq5/file-4275.jpg",
+        photo="https://telegra.ph/file/b26847056f19c1b5d7712.jpg",
         caption=caption,
         reply_markup=kb
     )
@@ -401,7 +402,7 @@ async def clone_command(client, message: Message):
             "Simply go there and start cloning !!"
         )
         await message.reply_photo(
-            photo="https://i.ibb.co/nqpSvrq5/file-4275.jpg",
+            photo="https://telegra.ph/file/b26847056f19c1b5d7712.jpg",
             caption=caption,
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🚀 Go to Main Bot", url=f"https://t.me/{main_username}")]]
@@ -489,11 +490,10 @@ async def register_self():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
-    
-    # Start the client
-    app.start()
-    # Register the bot (or clone) after client is ready
-    loop.run_until_complete(register_self())
+    loop.run_until_complete(app.start())        # Start the client
+    loop.run_until_complete(register_self())    # Register after start
     print("🚀 Banall Bot Booted Successfully (SQLite)")
-    # Keep the bot running
-    app.idle()
+    try:
+        loop.run_forever()                      # Keep the bot running
+    except KeyboardInterrupt:
+        print("Bot stopped.")
