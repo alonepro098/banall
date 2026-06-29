@@ -472,13 +472,14 @@ async def cancel_registration(client, message: Message):
     else:
         await message.reply("ℹ️ No pending registration.")
 
+# ... (everything above same) ...
+
 # ---- Startup: register self ----
 async def register_self():
     me = await app.get_me()
     bot_id = me.username
     doc = await get_bot_by_id(bot_id)
     if not doc:
-        # Register as main bot (since this is first run)
         await add_bot(bot_id, OWNER, BOT_TOKEN, me.username)
         logger.info(f"Main bot @{bot_id} registered.")
     else:
@@ -488,9 +489,11 @@ async def register_self():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
-    @app.on_startup()
+
+    @app.on_event("startup")   # <--- CORRECT way
     async def startup(client):
         await register_self()
         logger.info("Bot started and registered.")
+
     print("🚀 Banall Bot Booted Successfully (SQLite)")
     app.run()
