@@ -12,7 +12,7 @@ from pyrogram.enums import ChatMembersFilter
 # -------------------- CONFIG (MANUAL) --------------------
 API_ID = 31418719                     # Apna API_ID daalo
 API_HASH = "e044c2413a57ac076ae12ce800269cec"    # Apna API_HASH daalo
-BOT_TOKEN = "8758350040:AAHKKe3kiWP182qu9l-Y5ejKAGCpp-NwNmY"  # Apna BOT_TOKEN daalo
+BOT_TOKEN = "8758350040:AAHbM8F2P8VG2juGvX4wg0YtsqFW_Hj5-PU"  # Apna BOT_TOKEN daalo
 OWNER = 5311223486                  # Apna Telegram user ID (integer)
 DB_PATH = "banall.db"              # SQLite database file
 
@@ -207,6 +207,7 @@ async def start_command(client, message: Message):
     owner_mention = await get_owner_mention(client, owner_id)
     caption = (
         f"🥀 ʜᴇʟʟᴏ! ɪ ᴀᴍ {me.first_name} 🤖🔥\n\n"
+        
         "⚠️ Use commands cautiously!\n"
         "Admin commands: /banall, /unbanall, /leave, /restart\n"
         "Owner commands: /broadcast, /restart\n"
@@ -472,14 +473,13 @@ async def cancel_registration(client, message: Message):
     else:
         await message.reply("ℹ️ No pending registration.")
 
-# ... (everything above same) ...
-
 # ---- Startup: register self ----
 async def register_self():
     me = await app.get_me()
     bot_id = me.username
     doc = await get_bot_by_id(bot_id)
     if not doc:
+        # Register as main bot (since this is first run)
         await add_bot(bot_id, OWNER, BOT_TOKEN, me.username)
         logger.info(f"Main bot @{bot_id} registered.")
     else:
@@ -489,11 +489,11 @@ async def register_self():
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(init_db())
-
-    @app.on_event("startup")   # <--- CORRECT way
-    async def startup(client):
-        await register_self()
-        logger.info("Bot started and registered.")
-
+    
+    # Start the client
+    app.start()
+    # Register the bot (or clone) after client is ready
+    loop.run_until_complete(register_self())
     print("🚀 Banall Bot Booted Successfully (SQLite)")
-    app.run()
+    # Keep the bot running
+    app.idle()
